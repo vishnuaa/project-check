@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>PDF Image Viewer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: auto;
+        }
+
+        img {
+            max-width: 800px;
+            max-height: 1000px;
+            width: auto;
+            height: auto;
+            display: block;
+            margin: auto;
+            border: 1px solid #ccc;
+        }
+
+        .rectangle {
+            position: absolute;
+            background-color: blue;
+            opacity: 0.5;
+            cursor: move;
+            box-sizing: border-box;
+        }
+
+        .resize-handle {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background-color: red;
+            bottom: 0;
+            right: 0;
+            cursor: se-resize;
+        }
+
+        .image-wrapper {
+            position: relative;
+            margin: 1em 0;
+            padding: 1em;
+            display: none;
+            text-align: center;
+        }
+
+        .image-wrapper.active {
+            display: block;
+        }
+
+        .image-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1, h2 {
+            text-align: center;
+        }
+
+        form, button {
+            margin: 0.5em;
+        }
+
+        .controls {
+            margin-top: 0.5em;
+        }
+    </style>
+</head>
+<body>
+    <h1>Upload PDFs</h1>
+    <form action="/upload" method="POST" enctype="multipart/form-data" style="text-align: center;">
+        <input type="file" name="files" accept=".pdf" multiple>
+        <button type="submit">Upload</button>
+    </form>
+
+    <form action="{{ url_for('download_pdfs') }}" method="get">
+        <button type="submit">Download Final PDFs</button>
+    </form>
+    
+
+    {% for folder, images in pdf_images.items() %}
+        {% set pdf_index = loop.index %}
+        <h2>PDF: {{ folder }}</h2>
+        <div id="pdf-{{ pdf_index }}">
+            <div class="image-container">
+                {% for image in images %}
+                    {% set img_index = loop.index %}
+                    <div class="image-wrapper {% if loop.first %}active{% endif %}" data-pdf="{{ pdf_index }}">
+                        <img id="image-{{ pdf_index }}-{{ img_index }}" src="{{ image }}" alt="PDF Image">
+
+                        <div class="controls">
+                            <button type="button" onclick="drawRectangle({{ pdf_index }}, {{ img_index }})">Draw Rectangle</button>
+
+                            <form action="{{ url_for('rotate_image', folder=folder, image_name=image.split('/')[-1]) }}" method="POST" style="display:inline;">
+                                <button type="submit">Rotate 90°</button>
+                            </form>
+
+                            <form action="{{ url_for('delete_image', folder=folder, image_name=image.split('/')[-1]) }}" method="POST" style="display:inline;">
+                                <button type="submit">Delete</button>
+                            </form>
+
+                            <form id="saveForm-{{ pdf_index }}-{{ img_index }}"
+                                  action="{{ url_for('save_rectangle', folder=folder, image_name=image.split('/')[-1]) }}" method="POST" style="display:inline;">
+                                <input type="hidden" name="rect_x" id="rect_x-{{ pdf_index }}-{{ img_index }}">
+                                <input type="hidden" name="rect_y" id="rect_y-{{ pdf_index }}-{{ img_index }}">
+                                <input type="hidden" name="rect_width" id="rect_width-{{ pdf_index }}-{{ img_index }}">
+                                <input type="hidden" name="rect_height" id="rect_height-{{ pdf_index }}-{{ img_index }}">
+                                <button type="button" onclick="saveRectangle({{ pdf_index }}, {{ img_index }})">Save Rectangle</button>
+                            </form>
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+            <div style="text-align: center;">
+                <button onclick="prevImage({{ pdf_index }})">Back</button>
+                <button onclick="nextImage({{ pdf_index }})">Next</button>
+            </div>
+        </div>
+    {% endfor %}
+
+    <script>
+        const rectangles = {};
+        const currentIndices = {};
+
+        function showImage(pdfIndex, index) {
+            const wrappers = document.querySelectorAll(`.image-wrapper[data-pdf="${pdfIndex}"]`);
+            wrappers.forEach((el, i) => {
+                el.classList.toggle('active', i === index);
+            });
+            currentIndices[pdfIndex] = index;
+        }
+
+        function nextImage(pdfIndex) {
+            const wrappers = document.querySelectorAll(`.image-wrapper[data-pdf="${pdfIndex}"]`);
+            const currentIndex = currentIndices[pdfIndex] || 0;
+            if (currentIndex < wrappers.length - 1) {
+                showImage(pdfIndex, currentIndex + 1);
+            }
+        }
+
+        function prevImage(pdfIndex) {
+            const currentIndex = currentIndices[pdfIndex] || 0;
+            if (currentIndex > 0) {
+                showImage(pdfIndex, currentIndex - 1);
+            }
+        }
+
+        function drawRectangle(pdfIndex, imageIndex) {
+    const wrapper = document.querySelector(`.image-wrapper[data-pdf="${pdfIndex}"]:nth-of-type(${imageIndex})`);
+    const img = document.getElementById(`image-${pdfIndex}-${imageIndex}`);
+    const container = wrapper;
+
+    const rect = document.createElement('div');
+    rect.className = 'rectangle';
+    rect.style.width = '101px';
+    rect.style.height = '20px';
+
+    const centerX = (img.offsetWidth - 101) / 2;
+    const centerY = (img.offsetHeight - 20) / 2;
+
+    rect.style.left = centerX + 'px';
+    rect.style.top = centerY + 'px';
+
+    const handle = document.createElement('div');
+    handle.className = 'resize-handle';
+    rect.appendChild(handle);
+    container.appendChild(rect);
+
+    let isDragging = false;
+    let offsetX, offsetY;
+
+    rect.addEventListener('mousedown', function (e) {
+        if (e.target === handle) return;
+        isDragging = true;
+        offsetX = e.clientX - rect.getBoundingClientRect().left;
+        offsetY = e.clientY - rect.getBoundingClientRect().top;
+        e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', function (e) {
+        if (!isDragging) return;
+        const containerRect = img.getBoundingClientRect();
+        let left = e.clientX - containerRect.left - offsetX;
+        let top = e.clientY - containerRect.top - offsetY;
+
+        // Constrain within image boundaries
+        left = Math.max(0, Math.min(left, img.offsetWidth - rect.offsetWidth));
+        top = Math.max(0, Math.min(top, img.offsetHeight - rect.offsetHeight));
+
+        rect.style.left = left + 'px';
+        rect.style.top = top + 'px';
+    });
+
+    document.addEventListener('mouseup', function () {
+        isDragging = false;
+    });
+
+    handle.addEventListener('mousedown', function (e) {
+        e.stopPropagation();
+        const startX = e.clientX;
+        const startY = e.clientY;
+        const startWidth = rect.offsetWidth;
+        const startHeight = rect.offsetHeight;
+
+        function doResize(ev) {
+            let newWidth = startWidth + (ev.clientX - startX);
+            let newHeight = startHeight + (ev.clientY - startY);
+
+            // Constrain within image boundaries
+            newWidth = Math.min(newWidth, img.offsetWidth - rect.offsetLeft);
+            newHeight = Math.min(newHeight, img.offsetHeight - rect.offsetTop);
+
+            rect.style.width = Math.max(10, newWidth) + 'px';
+            rect.style.height = Math.max(10, newHeight) + 'px';
+        }
+
+        function stopResize() {
+            document.removeEventListener('mousemove', doResize);
+            document.removeEventListener('mouseup', stopResize);
+        }
+
+        document.addEventListener('mousemove', doResize);
+        document.addEventListener('mouseup', stopResize);
+    });
+
+    rectangles[`${pdfIndex}-${imageIndex}`] = rect;
+}
+
+
+        function saveRectangle(pdfIndex, imageIndex) {
+            const rect = rectangles[`${pdfIndex}-${imageIndex}`];
+            if (!rect) return;
+
+            const img = document.getElementById(`image-${pdfIndex}-${imageIndex}`);
+            const imgRect = img.getBoundingClientRect();
+            const container = img.parentElement;
+            const rectRect = rect.getBoundingClientRect();
+            const containerRect = container.getBoundingClientRect();
+
+            const scaleX = img.naturalWidth / img.width;
+            const scaleY = img.naturalHeight / img.height;
+
+            const relativeLeft = rectRect.left - imgRect.left;
+            const relativeTop = rectRect.top - imgRect.top;
+
+            const x = relativeLeft * scaleX;
+            const y = relativeTop * scaleY;
+            const width = rectRect.width * scaleX;
+            const height = rectRect.height * scaleY;
+
+            document.getElementById(`rect_x-${pdfIndex}-${imageIndex}`).value = x;
+            document.getElementById(`rect_y-${pdfIndex}-${imageIndex}`).value = y;
+            document.getElementById(`rect_width-${pdfIndex}-${imageIndex}`).value = width;
+            document.getElementById(`rect_height-${pdfIndex}-${imageIndex}`).value = height;
+
+            document.getElementById(`saveForm-${pdfIndex}-${imageIndex}`).submit();
+        }
+    </script>
+</body>
+</html>
+
+final index.html
+
+from flask import Flask, request, render_template, redirect, url_for, send_file
+import os
+from pdf2image import convert_from_path
+from PIL import Image, ImageDraw
+import werkzeug
+import uuid
+import fitz  # PyMuPDF
+import pytesseract
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+
+app = Flask(__name__)
+
+UPLOAD_FOLDER = 'uploads'
+IMAGE_FOLDER = 'static/images'
+PREVIEW_FOLDER = 'static/previews'
+OUTPUT_FOLDER = 'static/output'
+
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['IMAGE_FOLDER'] = IMAGE_FOLDER
+
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(IMAGE_FOLDER, exist_ok=True)
+os.makedirs(PREVIEW_FOLDER, exist_ok=True)
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+
+def compress_pdf_to_range(input_path, output_path, target_min=4 * 1024 * 1024, target_max=5 * 1024 * 1024):
+    quality = 95
+    step = 5
+    for attempt in range(10):  # Try up to 10 times with lower quality
+        doc = fitz.open(input_path)
+        new_doc = fitz.open()
+
+        for page in doc:
+            pix = page.get_pixmap(dpi=100)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            img_path = f"temp_page_{uuid.uuid4().hex}.jpg"
+            img.save(img_path, "JPEG", quality=quality)
+
+            img_page = new_doc.new_page(width=page.rect.width, height=page.rect.height)
+            img_page.insert_image(page.rect, filename=img_path)
+
+            os.remove(img_path)
+
+        new_doc.save(output_path)
+        new_doc.close()
+        doc.close()
+
+        size = os.path.getsize(output_path)
+        if target_min <= size <= target_max:
+            return  # Good range
+        elif size > target_max:
+            quality -= step
+        else:
+            break  # Don't go below target_min
+
+    # If it didn't work, keep the last attempt
+    return
+
+
+def process_pdf_images(image_paths, output_pdf_path):
+    width, height = A4
+    valid_images = []
+
+    for img_path in image_paths:
+        img_pil = Image.open(img_path)
+        extracted_text = pytesseract.image_to_string(img_pil).lower()
+
+        if "scanned" in extracted_text or "scan" in extracted_text:
+            continue
+
+        valid_images.append(img_path)
+
+    if not valid_images:
+        return None
+
+    c = canvas.Canvas(output_pdf_path, pagesize=A4)
+
+    for img_path in valid_images:
+        img = Image.open(img_path)
+        img_width, img_height = img.size
+
+        scale = min((width - 40) / img_width, (height - 100) / img_height)
+        new_width = int(img_width * scale)
+        new_height = int(img_height * scale)
+
+        x_position = (width - new_width) / 2
+        y_position = (height - new_height) / 2
+
+        c.drawImage(img_path, x_position, y_position, new_width, new_height)
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(20, 20, "Name of Agency & Address of Agency")
+
+        c.showPage()
+
+    c.save()
+
+    size = os.path.getsize(output_pdf_path)
+    if size > 5 * 1024 * 1024:
+        compressed_path = output_pdf_path.replace(".pdf", "_compressed.pdf")
+        compress_pdf_to_range(output_pdf_path, compressed_path)
+        if os.path.exists(compressed_path):
+            os.replace(compressed_path, output_pdf_path)
+
+    return output_pdf_path
+
+
+@app.route('/')
+def index():
+    pdf_images = {}
+    for folder in os.listdir(IMAGE_FOLDER):
+        folder_path = os.path.join(IMAGE_FOLDER, folder)
+        if os.path.isdir(folder_path):
+            images = sorted([
+                os.path.join(folder_path, img)
+                for img in os.listdir(folder_path)
+                if img.endswith('.png')
+            ])
+            pdf_images[folder] = images
+    return render_template('index.html', pdf_images=pdf_images)
+
+
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    if 'files' not in request.files:
+        return "No file part"
+
+    files = request.files.getlist('files')
+
+    for file in files:
+        if file and file.filename:
+            filename = werkzeug.utils.secure_filename(file.filename)
+            unique_id = str(uuid.uuid4())
+            save_dir = os.path.join(IMAGE_FOLDER, unique_id)
+            os.makedirs(save_dir, exist_ok=True)
+
+            filepath = os.path.join(UPLOAD_FOLDER, filename)
+            file.save(filepath)
+
+            images = convert_from_path(filepath)
+            for idx, img in enumerate(images):
+                img.thumbnail((500, 500))
+                img.save(os.path.join(save_dir, f"page_{idx}.png"), 'PNG')
+
+    return redirect(url_for('index'))
+
+
+@app.route('/rotate/<folder>/<image_name>', methods=['POST'])
+def rotate_image(folder, image_name):
+    image_path = os.path.join(IMAGE_FOLDER, folder, image_name)
+    if os.path.exists(image_path):
+        img = Image.open(image_path)
+        img = img.rotate(90, expand=True)
+        img.save(image_path, 'PNG')
+    return redirect(url_for('index'))
+
+
+@app.route('/delete/<folder>/<image_name>', methods=['POST'])
+def delete_image(folder, image_name):
+    image_path = os.path.join(IMAGE_FOLDER, folder, image_name)
+    if os.path.exists(image_path):
+        os.remove(image_path)
+    return redirect(url_for('index'))
+
+
+@app.route('/save_rectangle/<folder>/<image_name>', methods=['POST'])
+def save_rectangle(folder, image_name):
+    try:
+        rect_x = int(float(request.form['rect_x']))
+        rect_y = int(float(request.form['rect_y']))
+        rect_width = int(float(request.form['rect_width']))
+        rect_height = int(float(request.form['rect_height']))
+
+        image_path = os.path.join(IMAGE_FOLDER, folder, image_name)
+        if os.path.exists(image_path):
+            img = Image.open(image_path)
+            draw = ImageDraw.Draw(img)
+            draw.rectangle([rect_x, rect_y, rect_x + rect_width, rect_y + rect_height], fill="blue")
+            img.save(image_path, 'PNG')
+        return redirect(url_for('index'))
+    except Exception as e:
+        return f"An error occurred: {str(e)}"
+
+
+@app.route('/download_pdfs')
+def download_pdfs():
+    generated_files = []
+
+    for folder in os.listdir(IMAGE_FOLDER):
+        folder_path = os.path.join(IMAGE_FOLDER, folder)
+        if not os.path.isdir(folder_path):
+            continue
+
+        image_files = sorted([
+            os.path.join(folder_path, f) for f in os.listdir(folder_path) if f.endswith('.png')
+        ])
+
+        output_pdf_path = os.path.join(OUTPUT_FOLDER, f"{folder}_final.pdf")
+        result = process_pdf_images(image_files, output_pdf_path)
+
+        if result:
+            generated_files.append(result)
+
+    if not generated_files:
+        return "No valid PDFs generated."
+
+    if len(generated_files) == 1:
+        return send_file(generated_files[0], as_attachment=True)
+
+    import zipfile
+    zip_path = os.path.join(OUTPUT_FOLDER, "all_pdfs.zip")
+    with zipfile.ZipFile(zip_path, 'w') as zipf:
+        for pdf_path in generated_files:
+            zipf.write(pdf_path, os.path.basename(pdf_path))
+
+    return send_file(zip_path, as_attachment=True)
+
+
+if __name__ == '__main__':
+    app.run(debug=True)
+
+final app.py code

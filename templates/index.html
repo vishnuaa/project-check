@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>PDF Image Viewer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: auto;
+        }
+
+        img {
+            max-width: 800px;
+            max-height: 1000px;
+            width: auto;
+            height: auto;
+            display: block;
+            margin: auto;
+            border: 1px solid #ccc;
+        }
+
+        .rectangle {
+            position: absolute;
+            background-color: blue;
+            opacity: 0.5;
+            cursor: move;
+            box-sizing: border-box;
+        }
+
+        .resize-handle {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background-color: red;
+            bottom: 0;
+            right: 0;
+            cursor: se-resize;
+        }
+
+        .image-wrapper {
+            position: relative;
+            margin: 1em 0;
+            padding: 1em;
+            display: none;
+            text-align: center;
+        }
+
+        .image-wrapper.active {
+            display: block;
+        }
+
+        .image-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1, h2 {
+            text-align: center;
+        }
+
+        form, button {
+            margin: 0.5em;
+        }
+
+        .controls {
+            margin-top: 0.5em;
+        }
+    </style>
+</head>
+<body>
+    <h1>Upload PDFs</h1>
+    <form action="/upload" method="POST" enctype="multipart/form-data" style="text-align: center;">
+        <input type="file" name="files" accept=".pdf" multiple>
+        <button type="submit">Upload</button>
+    </form>
+
+    <form action="{{ url_for('download_pdfs') }}" method="get">
+        <button type="submit">Download Final PDFs</button>
+    </form>
+    
+
+    {% for folder, images in pdf_images.items() %}
+        {% set pdf_index = loop.index %}
+        <h2>PDF: {{ folder }}</h2>
+        <form action="{{ url_for('rename_folder', old_name=folder) }}" method="POST" style="margin-bottom: 10px;">
+             <input type="text" name="new_name" placeholder="Rename PDF">
+             <button type="submit">Rename</button>
+        </form>
+
+
+        <div id="pdf-{{ pdf_index }}">
+            <div class="image-container">
+                {% for image in images %}
+                    {% set img_index = loop.index %}
+                    <div class="image-wrapper {% if loop.first %}active{% endif %}" data-pdf="{{ pdf_index }}">
+                        <img id="image-{{ pdf_index }}-{{ img_index }}" src="{{ image }}" alt="PDF Image">
+
+                        <div class="controls">
+                            <button type="button" onclick="drawRectangle({{ pdf_index }}, {{ img_index }})">Draw Rectangle</button>
+
+                            <form action="{{ url_for('rotate_image', folder=folder, image_name=image.split('/')[-1]) }}" method="POST" style="display:inline;">
+                                <button type="submit">Rotate 90°</button>
+                            </form>
+
+                            <form action="{{ url_for('delete_image', folder=folder, image_name=image.split('/')[-1]) }}" method="POST" style="display:inline;">
+                                <button type="submit">Delete</button>
+                            </form>
+
+                            <form id="saveForm-{{ pdf_index }}-{{ img_index }}"
+                                  action="{{ url_for('save_rectangle', folder=folder, image_name=image.split('/')[-1]) }}" method="POST" style="display:inline;">
+                                <input type="hidden" name="rect_x" id="rect_x-{{ pdf_index }}-{{ img_index }}">
+                                <input type="hidden" name="rect_y" id="rect_y-{{ pdf_index }}-{{ img_index }}">
+                                <input type="hidden" name="rect_width" id="rect_width-{{ pdf_index }}-{{ img_index }}">
+                                <input type="hidden" name="rect_height" id="rect_height-{{ pdf_index }}-{{ img_index }}">
+                                <button type="button" onclick="saveRectangle({{ pdf_index }}, {{ img_index }})">Save Rectangle</button>
+                            </form>
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+            <div style="text-align: center;">
+                <button onclick="prevImage({{ pdf_index }})">Back</button>
+                <button onclick="nextImage({{ pdf_index }})">Next</button>
+            </div>
+        </div>
+    {% endfor %}
+
+    <script>
+        const rectangles = {};
+        const currentIndices = {};
+
+        function showImage(pdfIndex, index) {
+            const wrappers = document.querySelectorAll(`.image-wrapper[data-pdf="${pdfIndex}"]`);
+            wrappers.forEach((el, i) => {
+                el.classList.toggle('active', i === index);
+            });
+            currentIndices[pdfIndex] = index;
+        }
+
+        function nextImage(pdfIndex) {
+            const wrappers = document.querySelectorAll(`.image-wrapper[data-pdf="${pdfIndex}"]`);
+            const currentIndex = currentIndices[pdfIndex] || 0;
+            if (currentIndex < wrappers.length - 1) {
+                showImage(pdfIndex, currentIndex + 1);
+            }
+        }
+
+        function prevImage(pdfIndex) {
+            const currentIndex = currentIndices[pdfIndex] || 0;
+            if (currentIndex > 0) {
+                showImage(pdfIndex, currentIndex - 1);
+            }
+        }
+
+        function drawRectangle(pdfIndex, imageIndex) {
+    const wrapper = document.querySelector(`.image-wrapper[data-pdf="${pdfIndex}"]:nth-of-type(${imageIndex})`);
+    const img = document.getElementById(`image-${pdfIndex}-${imageIndex}`);
+    const container = wrapper;
+
+    const rect = document.createElement('div');
+    rect.className = 'rectangle';
+    rect.style.width = '146px';
+    rect.style.height = '29px';
+
+    const centerX = (img.offsetWidth - 101) / 2;
+    const centerY = (img.offsetHeight - 20) / 2;
+
+    rect.style.left = centerX + 'px';
+    rect.style.top = centerY + 'px';
+
+    const handle = document.createElement('div');
+    handle.className = 'resize-handle';
+    rect.appendChild(handle);
+    container.appendChild(rect);
+
+    let isDragging = false;
+    let offsetX, offsetY;
+
+    rect.addEventListener('mousedown', function (e) {
+        if (e.target === handle) return;
+        isDragging = true;
+        offsetX = e.clientX - rect.getBoundingClientRect().left;
+        offsetY = e.clientY - rect.getBoundingClientRect().top;
+        e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', function (e) {
+        if (!isDragging) return;
+        const containerRect = img.getBoundingClientRect();
+        let left = e.clientX - containerRect.left - offsetX;
+        let top = e.clientY - containerRect.top - offsetY;
+
+        // Constrain within image boundaries
+        left = Math.max(0, Math.min(left, img.offsetWidth - rect.offsetWidth));
+        top = Math.max(0, Math.min(top, img.offsetHeight - rect.offsetHeight));
+
+        rect.style.left = left + 'px';
+        rect.style.top = top + 'px';
+    });
+
+    document.addEventListener('mouseup', function () {
+        isDragging = false;
+    });
+
+    handle.addEventListener('mousedown', function (e) {
+        e.stopPropagation();
+        const startX = e.clientX;
+        const startY = e.clientY;
+        const startWidth = rect.offsetWidth;
+        const startHeight = rect.offsetHeight;
+
+        function doResize(ev) {
+            let newWidth = startWidth + (ev.clientX - startX);
+            let newHeight = startHeight + (ev.clientY - startY);
+
+            // Constrain within image boundaries
+            newWidth = Math.min(newWidth, img.offsetWidth - rect.offsetLeft);
+            newHeight = Math.min(newHeight, img.offsetHeight - rect.offsetTop);
+
+            rect.style.width = Math.max(10, newWidth) + 'px';
+            rect.style.height = Math.max(10, newHeight) + 'px';
+        }
+
+        function stopResize() {
+            document.removeEventListener('mousemove', doResize);
+            document.removeEventListener('mouseup', stopResize);
+        }
+
+        document.addEventListener('mousemove', doResize);
+        document.addEventListener('mouseup', stopResize);
+    });
+
+    rectangles[`${pdfIndex}-${imageIndex}`] = rect;
+}
+
+
+        function saveRectangle(pdfIndex, imageIndex) {
+            const rect = rectangles[`${pdfIndex}-${imageIndex}`];
+            if (!rect) return;
+
+            const img = document.getElementById(`image-${pdfIndex}-${imageIndex}`);
+            const imgRect = img.getBoundingClientRect();
+            const container = img.parentElement;
+            const rectRect = rect.getBoundingClientRect();
+            const containerRect = container.getBoundingClientRect();
+
+            const scaleX = img.naturalWidth / img.width;
+            const scaleY = img.naturalHeight / img.height;
+
+            const relativeLeft = rectRect.left - imgRect.left;
+            const relativeTop = rectRect.top - imgRect.top;
+
+            const x = relativeLeft * scaleX;
+            const y = relativeTop * scaleY;
+            const width = rectRect.width * scaleX;
+            const height = rectRect.height * scaleY;
+
+            document.getElementById(`rect_x-${pdfIndex}-${imageIndex}`).value = x;
+            document.getElementById(`rect_y-${pdfIndex}-${imageIndex}`).value = y;
+            document.getElementById(`rect_width-${pdfIndex}-${imageIndex}`).value = width;
+            document.getElementById(`rect_height-${pdfIndex}-${imageIndex}`).value = height;
+
+            document.getElementById(`saveForm-${pdfIndex}-${imageIndex}`).submit();
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+flask
+pdf2image
+fitz
+frontend
+tools
+pytesseract
+reportlab
