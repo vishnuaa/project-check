@@ -31,7 +31,9 @@ def compress_pdf_to_range(input_path, output_path, target_min=4 * 1024 * 1024, t
     quality = 95
     step = 5
     for _ in range(10):
-        doc = fitz.open(input_path)
+        # Open the PDF using fitz
+        doc = fitz.open(input_path)  # Ensure you're using the correct method to open the PDF
+
         new_doc = fitz.open()
 
         for page in doc:
@@ -56,6 +58,7 @@ def compress_pdf_to_range(input_path, output_path, target_min=4 * 1024 * 1024, t
             break
 
 
+
 def process_pdf_images(image_paths, output_pdf_path):
     width, height = A4
     valid_images = []
@@ -63,8 +66,7 @@ def process_pdf_images(image_paths, output_pdf_path):
     for img_path in image_paths:
         img = Image.open(img_path)
         extracted_text = pytesseract.image_to_string(img).lower()
-        if "scanned" in extracted_text or "scan" in extracted_text:
-            continue
+
         valid_images.append(img_path)
 
     if not valid_images:
@@ -90,7 +92,7 @@ def process_pdf_images(image_paths, output_pdf_path):
     c.save()
 
     size = os.path.getsize(output_pdf_path)
-    if size > 5 * 1024 * 1024:
+    if size > 5 * 1024 * 1024:  # Only compress if the size is above 2MB
         compressed_path = output_pdf_path.replace(".pdf", "_compressed.pdf")
         compress_pdf_to_range(output_pdf_path, compressed_path)
         if os.path.exists(compressed_path):
@@ -120,7 +122,7 @@ def index():
     for folder in os.listdir(IMAGE_FOLDER):
         folder_path = os.path.join(IMAGE_FOLDER, folder)
         if os.path.isdir(folder_path):
-            images = sorted([
+            images = sorted([ 
                 os.path.join(folder_path, img)
                 for img in os.listdir(folder_path)
                 if img.endswith('.png')
@@ -223,11 +225,11 @@ def download_pdfs():
         if not os.path.isdir(folder_path):
             continue
 
-        image_files = sorted([
+        image_files = sorted([ 
             os.path.join(folder_path, f) for f in os.listdir(folder_path) if f.endswith('.png')
         ])
 
-        output_filename = f"OTH {folder}.pdf"
+        output_filename = f"{folder} OTH.pdf"
         output_path = os.path.join(OUTPUT_FOLDER, output_filename)
 
         result = process_pdf_images(image_files, output_path)
@@ -243,7 +245,7 @@ def download_pdfs():
     if len(generated_files) == 1:
         return send_file(generated_files[0], as_attachment=True)
 
-    zip_path = os.path.join(OUTPUT_FOLDER, "OTH PDFs.zip")
+    zip_path = os.path.join(OUTPUT_FOLDER, "PDFs OTH.zip")
     with zipfile.ZipFile(zip_path, 'w') as zipf:
         for pdf_path in generated_files:
             zipf.write(pdf_path, os.path.basename(pdf_path))
